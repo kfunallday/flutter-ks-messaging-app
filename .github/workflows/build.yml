@@ -1,5 +1,6 @@
 name: Build Android APK
 
+
 on:
   push:
     branches: [ main, master ]
@@ -31,7 +32,7 @@ jobs:
     - name: Restore Keystore
       run: |
         mkdir -p ~/.android
-        echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > ~/.android/debug.keystore
+        echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode --ignore-garbage > ~/.android/debug.keystore
 
     - name: Build APK
       run: flutter build apk --release
