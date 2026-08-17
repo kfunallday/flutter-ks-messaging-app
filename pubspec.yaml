@@ -1,17 +1,21 @@
 name: ksmessaging
 description: Ks-messaging private chat application.
 
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
 dependencies:
   flutter:
     sdk: flutter
-  image_picker: 0.1.1
-  google_sign_in: 0.3.1
-  firebase_analytics: 0.0.4
-  firebase_auth: 0.2.0
-  firebase_database: 0.0.12
-  firebase_storage: 0.0.5
+  image_picker: ^1.0.0
+  google_sign_in: ^6.1.0
+  firebase_analytics: ^10.8.0
+  firebase_auth: ^4.16.0
+  firebase_database: ^10.4.0
+  firebase_storage: ^11.6.0
+  cloud_firestore: ^4.14.0
 
-  cupertino_icons: ^0.1.0
+  cupertino_icons: ^1.0.0
 
 dev_dependencies:
   flutter_test:
