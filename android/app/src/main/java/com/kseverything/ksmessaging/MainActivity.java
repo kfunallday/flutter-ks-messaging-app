@@ -1,4 +1,4 @@
-package com.yourcompany.flutterchatapp;
+package com.kseverything.ksmessaging;
 
 import io.flutter.embedding.android.FlutterActivity;
 
