@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
 
 class Themes {
-
-  static ThemeData kIOSTheme = new ThemeData(
-    primarySwatch: Colors.blue,
+  static final ThemeData kIOSTheme = ThemeData(
+    primarySwatch: Colors.orange,
     primaryColor: Colors.grey[100],
-    primaryColorBrightness: Brightness.light,
+    colorScheme: ColorScheme.light(
+      primary: Colors.grey[100]!,
+      secondary: Colors.orangeAccent,
+    ),
   );
 
-  static ThemeData kDefaultTheme = new ThemeData(
-    primarySwatch: Colors.blue,
-    accentColor: Colors.blue[400],
+  static final ThemeData kDefaultTheme = ThemeData(
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: Colors.purple,
+      primary: Colors.purple,
+      secondary: Colors.blue[400]!,
+    ),
   );
 }

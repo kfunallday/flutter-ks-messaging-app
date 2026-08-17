@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_analytics/firebase_analytics.dart';
@@ -8,204 +7,174 @@ import 'package:firebase_database/ui/firebase_animated_list.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_chat_app/ChatMessageListItem.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:image_picker/image_picker.dart';
 
-final googleSignIn = new GoogleSignIn();
-final analytics = new FirebaseAnalytics();
+import 'ChatMessageListItem.dart';
+
+final googleSignIn = GoogleSignIn();
+final analytics = FirebaseAnalytics.instance;
 final auth = FirebaseAuth.instance;
-var currentUserEmail;
-var _scaffoldContext;
 
 class ChatScreen extends StatefulWidget {
+  const ChatScreen({super.key});
+
   @override
-  ChatScreenState createState() {
-    return new ChatScreenState();
-  }
+  State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class ChatScreenState extends State<ChatScreen> {
-  final TextEditingController _textEditingController =
-      new TextEditingController();
-  bool _isComposingMessage = false;
-  final reference = FirebaseDatabase.instance.reference().child('messages');
+class _ChatScreenState extends State<ChatScreen> {
+  final TextEditingController _textEditingController = TextEditingController();
+  bool _isComposing = false;
+  final DatabaseReference _messageRef =
+      FirebaseDatabase.instance.ref().child('messages');
 
   @override
   Widget build(BuildContext context) {
-    return new Scaffold(
-        appBar: new AppBar(
-          title: new Text("Flutter Chat App"),
-          elevation:
-              Theme.of(context).platform == TargetPlatform.iOS ? 0.0 : 4.0,
-          actions: <Widget>[
-            new IconButton(
-                icon: new Icon(Icons.exit_to_app), onPressed: _signOut)
-          ],
-        ),
-        body: new Container(
-          child: new Column(
-            children: <Widget>[
-              new Flexible(
-                child: new FirebaseAnimatedList(
-                  query: reference,
-                  padding: const EdgeInsets.all(8.0),
-                  reverse: true,
-                  sort: (a, b) => b.key.compareTo(a.key),
-                  //comparing timestamp of messages to check which one would appear first
-                  itemBuilder: (_, DataSnapshot messageSnapshot,
-                      Animation<double> animation) {
-                    return new ChatMessageListItem(
-                      messageSnapshot: messageSnapshot,
-                      animation: animation,
-                    );
-                  },
-                ),
-              ),
-              new Divider(height: 1.0),
-              new Container(
-                decoration:
-                    new BoxDecoration(color: Theme.of(context).cardColor),
-                child: _buildTextComposer(),
-              ),
-              new Builder(builder: (BuildContext context) {
-                _scaffoldContext = context;
-                return new Container(width: 0.0, height: 0.0);
-              })
-            ],
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Flutter Chat App'),
+        elevation: Theme.of(context).platform == TargetPlatform.iOS ? 0.0 : 4.0,
+        actions: <Widget>[
+          IconButton(
+            icon: const Icon(Icons.exit_to_app),
+            onPressed: _signOut,
+          )
+        ],
+      ),
+      body: Column(
+        children: <Widget>[
+          Flexible(
+            child: FirebaseAnimatedList(
+              query: _messageRef,
+              sort: (a, b) {
+                final aKey = a.key ?? '';
+                final bKey = b.key ?? '';
+                return bKey.compareTo(aKey);
+              },
+              itemBuilder: (BuildContext context, DataSnapshot messageSnapshot,
+                  Animation<double> animation, int index) {
+                return ChatMessageListItem(
+                  messageSnapshot: messageSnapshot,
+                  animation: animation,
+                );
+              },
+            ),
           ),
-          decoration: Theme.of(context).platform == TargetPlatform.iOS
-              ? new BoxDecoration(
-                  border: new Border(
-                      top: new BorderSide(
-                  color: Colors.grey[200],
-                )))
-              : null,
-        ));
-  }
-
-  CupertinoButton getIOSSendButton() {
-    return new CupertinoButton(
-      child: new Text("Send"),
-      onPressed: _isComposingMessage
-          ? () => _textMessageSubmitted(_textEditingController.text)
-          : null,
-    );
-  }
-
-  IconButton getDefaultSendButton() {
-    return new IconButton(
-      icon: new Icon(Icons.send),
-      onPressed: _isComposingMessage
-          ? () => _textMessageSubmitted(_textEditingController.text)
-          : null,
+          Container(
+            decoration: BoxDecoration(color: Theme.of(context).cardColor),
+            child: _buildTextComposer(),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildTextComposer() {
-    return new IconTheme(
-        data: new IconThemeData(
-          color: _isComposingMessage
-              ? Theme.of(context).accentColor
-              : Theme.of(context).disabledColor,
-        ),
-        child: new Container(
-          margin: const EdgeInsets.symmetric(horizontal: 8.0),
-          child: new Row(
-            children: <Widget>[
-              new Container(
-                margin: new EdgeInsets.symmetric(horizontal: 4.0),
-                child: new IconButton(
-                    icon: new Icon(
-                      Icons.photo_camera,
-                      color: Theme.of(context).accentColor,
+    return IconTheme(
+      data: IconThemeData(color: Theme.of(context).colorScheme.secondary),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 8.0),
+        child: Row(
+          children: <Widget>[
+            IconButton(
+              icon: const Icon(Icons.photo_camera),
+              onPressed: () async {
+                await _ensureLoggedIn();
+                final ImagePicker picker = ImagePicker();
+                final XFile? imageFile =
+                    await picker.pickImage(source: ImageSource.gallery);
+                if (imageFile == null) return;
+
+                int random = DateTime.now().millisecondsSinceEpoch;
+                Reference storageReference = FirebaseStorage.instance
+                    .ref()
+                    .child('chat_image_$random.jpg');
+                UploadTask uploadTask =
+                    storageReference.putFile(File(imageFile.path));
+                TaskSnapshot snapshot = await uploadTask;
+                String downloadUrl = await snapshot.ref.getDownloadURL();
+                _sendMessage(messageText: null, imageUrl: downloadUrl);
+              },
+            ),
+            Flexible(
+              child: TextField(
+                controller: _textEditingController,
+                onChanged: (String text) {
+                  setState(() {
+                    _isComposing = text.trim().isNotEmpty;
+                  });
+                },
+                onSubmitted: _handleSubmitted,
+                decoration:
+                    const InputDecoration.collapsed(hintText: 'Send a message'),
+              ),
+            ),
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 4.0),
+              child: Theme.of(context).platform == TargetPlatform.iOS
+                  ? CupertinoButton(
+                      child: const Text('Send'),
+                      onPressed: _isComposing
+                          ? () => _handleSubmitted(_textEditingController.text)
+                          : null,
+                    )
+                  : IconButton(
+                      icon: const Icon(Icons.send),
+                      onPressed: _isComposing
+                          ? () => _handleSubmitted(_textEditingController.text)
+                          : null,
                     ),
-                    onPressed: () async {
-                      await _ensureLoggedIn();
-                      File imageFile = await ImagePicker.pickImage();
-                      int timestamp = new DateTime.now().millisecondsSinceEpoch;
-                      StorageReference storageReference = FirebaseStorage
-                          .instance
-                          .ref()
-                          .child("img_" + timestamp.toString() + ".jpg");
-                      StorageUploadTask uploadTask =
-                          storageReference.put(imageFile);
-                      Uri downloadUrl = (await uploadTask.future).downloadUrl;
-                      _sendMessage(
-                          messageText: null, imageUrl: downloadUrl.toString());
-                    }),
-              ),
-              new Flexible(
-                child: new TextField(
-                  controller: _textEditingController,
-                  onChanged: (String messageText) {
-                    setState(() {
-                      _isComposingMessage = messageText.length > 0;
-                    });
-                  },
-                  onSubmitted: _textMessageSubmitted,
-                  decoration:
-                      new InputDecoration.collapsed(hintText: "Send a message"),
-                ),
-              ),
-              new Container(
-                margin: const EdgeInsets.symmetric(horizontal: 4.0),
-                child: Theme.of(context).platform == TargetPlatform.iOS
-                    ? getIOSSendButton()
-                    : getDefaultSendButton(),
-              ),
-            ],
-          ),
-        ));
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
-  Future<Null> _textMessageSubmitted(String text) async {
+  Future<void> _handleSubmitted(String text) async {
     _textEditingController.clear();
-
     setState(() {
-      _isComposingMessage = false;
+      _isComposing = false;
     });
-
     await _ensureLoggedIn();
     _sendMessage(messageText: text, imageUrl: null);
   }
 
-  void _sendMessage({String messageText, String imageUrl}) {
-    reference.push().set({
+  void _sendMessage({String? messageText, String? imageUrl}) {
+    final currentUser = googleSignIn.currentUser;
+    _messageRef.push().set({
       'text': messageText,
-      'email': googleSignIn.currentUser.email,
+      'email': currentUser?.email,
       'imageUrl': imageUrl,
-      'senderName': googleSignIn.currentUser.displayName,
-      'senderPhotoUrl': googleSignIn.currentUser.photoUrl,
+      'senderName': currentUser?.displayName,
+      'senderPhotoUrl': currentUser?.photoUrl,
     });
-
     analytics.logEvent(name: 'send_message');
   }
 
-  Future<Null> _ensureLoggedIn() async {
-    GoogleSignInAccount signedInUser = googleSignIn.currentUser;
-    if (signedInUser == null)
-      signedInUser = await googleSignIn.signInSilently();
-    if (signedInUser == null) {
-      await googleSignIn.signIn();
-      analytics.logLogin();
-    }
+  Future<void> _ensureLoggedIn() async {
+    GoogleSignInAccount? user = googleSignIn.currentUser ??
+        await googleSignIn.signInSilently() ??
+        await googleSignIn.signIn();
 
-    currentUserEmail = googleSignIn.currentUser.email;
-
-    if (await auth.currentUser() == null) {
-      GoogleSignInAuthentication credentials =
-          await googleSignIn.currentUser.authentication;
-      await auth.signInWithGoogle(
-          idToken: credentials.idToken, accessToken: credentials.accessToken);
+    if (user != null && auth.currentUser == null) {
+      final GoogleSignInAuthentication googleAuth = await user.authentication;
+      final AuthCredential credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+      await auth.signInWithCredential(credential);
     }
   }
 
-  Future _signOut() async {
+  Future<void> _signOut() async {
+    await googleSignIn.signOut();
     await auth.signOut();
-    googleSignIn.signOut();
-    Scaffold
-        .of(_scaffoldContext)
-        .showSnackBar(new SnackBar(content: new Text('User logged out')));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User logged out')),
+      );
+    }
   }
 }
