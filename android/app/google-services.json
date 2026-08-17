@@ -12,7 +12,20 @@
           "package_name": "com.kseverything.ksmessaging"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "290351455994-5d6atgvaedslld2df98j07l6dbhooiga.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.kseverything.ksmessaging",
+            "certificate_hash": "7936b18f65552e1888a306e4835a09e3acfbb17d"
+          }
+        },
+        {
+          "client_id": "290351455994-0lvi5lmiu2f34vklmr6mor9esa73153e.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBHjTxOyO8kfRYnTgNs71CMSZjtEradn3g"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "290351455994-0lvi5lmiu2f34vklmr6mor9esa73153e.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }
