@@ -1,3 +1,5 @@
+below is the readme for the boiler plate base I used not for this fork.
+
 # Flutter Chat App
 
 A one-to-one chat app built on Flutter with firebase authentication and image sharing capability.

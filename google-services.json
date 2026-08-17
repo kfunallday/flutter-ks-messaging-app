@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "290351455994",
+    "project_id": "ks-messaging-cb8bb",
+    "storage_bucket": "ks-messaging-cb8bb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:290351455994:android:4a3a1363975dce1e2a3343",
+        "android_client_info": {
+          "package_name": "com.kseverything.ksmessaging"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBHjTxOyO8kfRYnTgNs71CMSZjtEradn3g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
