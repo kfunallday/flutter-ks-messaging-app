@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -22,6 +23,17 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  // Helper method to write or update user details in Cloud Firestore
+  Future<void> _syncUserToFirestore(User user) async {
+    await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+      'uid': user.uid,
+      'email': user.email ?? '',
+      'displayName': user.displayName ?? user.email?.split('@')[0] ?? 'User',
+      'photoURL': user.photoURL ?? '',
+      'lastSeen': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
   Future<void> _handleEmailAuth() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
@@ -33,16 +45,21 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = true);
     try {
+      UserCredential userCredential;
       if (_isSignUp) {
-        await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
           email: email,
           password: password,
         );
       } else {
-        await FirebaseAuth.instance.signInWithEmailAndPassword(
+        userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
           email: email,
           password: password,
         );
+      }
+
+      if (userCredential.user != null) {
+        await _syncUserToFirestore(userCredential.user!);
       }
     } on FirebaseAuthException catch (e) {
       _showError(e.message ?? 'Authentication failed.');
@@ -57,14 +74,13 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
     try {
       final GoogleSignIn googleSignIn = GoogleSignIn(
-        // Replace with your Web Client ID from Firebase Console (client_type 3 in google-services.json)
         serverClientId: '290351455994-0lvi5lmiu2f34vklmr6mor9esa73153e.apps.googleusercontent.com',
       );
 
       final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
       if (googleUser == null) {
         setState(() => _isLoading = false);
-        return; // User canceled the sign-in prompt
+        return;
       }
 
       final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
@@ -73,7 +89,11 @@ class _LoginScreenState extends State<LoginScreen> {
         idToken: googleAuth.idToken,
       );
 
-      await FirebaseAuth.instance.signInWithCredential(credential);
+      final userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
+
+      if (userCredential.user != null) {
+        await _syncUserToFirestore(userCredential.user!);
+      }
     } catch (e) {
       _showError('Google Sign-In failed: $e');
     } finally {
