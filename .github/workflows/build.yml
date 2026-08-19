@@ -1,6 +1,5 @@
 name: Build Android APK
 
-
 on:
   push:
     branches: [ main, master ]
@@ -25,12 +24,13 @@ jobs:
       uses: subosito/flutter-action@v2
       with:
         channel: 'stable'
+        cache: true # Enables dependency caching to speed up builds
 
     - name: Install Dependencies
       run: flutter pub get
 
-      
     - name: Restore Keystore
+      if: env.KEYSTORE_BASE64 != ''
       env:
         KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
       run: |
@@ -45,3 +45,4 @@ jobs:
       with:
         name: ksmessaging-release-apk
         path: build/app/outputs/flutter-apk/*.apk
+        retention-days: 7 # Automatically cleans up old build files after 7 days

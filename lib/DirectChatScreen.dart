@@ -22,7 +22,7 @@ class DirectChatScreen extends StatefulWidget {
 
 class _DirectChatScreenState extends State<DirectChatScreen> {
   final TextEditingController _textEditingController = TextEditingController();
-  bool _isComposing = false;
+  final ValueNotifier<bool> _isComposing = ValueNotifier<bool>(false);
   late final String _chatRoomId;
   final currentUser = FirebaseAuth.instance.currentUser;
 
@@ -32,6 +32,13 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
     // Deterministic chat ID generation (sorted UIDs)
     final ids = [currentUser!.uid, widget.peerUid]..sort();
     _chatRoomId = ids.join('_');
+  }
+
+  @override
+  void dispose() {
+    _textEditingController.dispose();
+    _isComposing.dispose();
+    super.dispose();
   }
 
   @override
@@ -80,7 +87,15 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             if (data['imageUrl'] != null)
-                              Image.network(data['imageUrl'], width: 200, height: 200, fit: BoxFit.cover),
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 4.0),
+                                child: Image.network(
+                                  data['imageUrl'],
+                                  width: 200,
+                                  height: 200,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
                             if (data['text'] != null && data['text'].toString().isNotEmpty)
                               Text(data['text'], style: const TextStyle(fontSize: 16)),
                           ],
@@ -116,25 +131,28 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
               child: TextField(
                 controller: _textEditingController,
                 onChanged: (text) {
-                  setState(() {
-                    _isComposing = text.trim().isNotEmpty;
-                  });
+                  _isComposing.value = text.trim().isNotEmpty;
                 },
                 onSubmitted: _handleSubmitted,
                 decoration: const InputDecoration.collapsed(hintText: 'Send a message'),
               ),
             ),
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Theme.of(context).platform == TargetPlatform.iOS
-                  ? CupertinoButton(
-                      onPressed: _isComposing ? () => _handleSubmitted(_textEditingController.text) : null,
-                      child: const Text('Send'),
-                    )
-                  : IconButton(
-                      icon: const Icon(Icons.send),
-                      onPressed: _isComposing ? () => _handleSubmitted(_textEditingController.text) : null,
-                    ),
+            ValueListenableBuilder<bool>(
+              valueListenable: _isComposing,
+              builder: (context, isComposing, child) {
+                return Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 4.0),
+                  child: Theme.of(context).platform == TargetPlatform.iOS
+                      ? CupertinoButton(
+                          onPressed: isComposing ? () => _handleSubmitted(_textEditingController.text) : null,
+                          child: const Text('Send'),
+                        )
+                      : IconButton(
+                          icon: const Icon(Icons.send),
+                          onPressed: isComposing ? () => _handleSubmitted(_textEditingController.text) : null,
+                        ),
+                );
+              },
             ),
           ],
         ),
@@ -147,39 +165,132 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
     final XFile? imageFile = await picker.pickImage(source: ImageSource.gallery);
     if (imageFile == null) return;
 
+    final File file = File(imageFile.path);
+    final int fileSize = await file.length();
+
+    // Check user quota before uploading
+    final userDocRef = FirebaseFirestore.instance.collection('users').doc(currentUser!.uid);
+    final userDoc = await userDocRef.get();
+
+    bool isSenderOverQuota = false;
+    if (userDoc.exists) {
+      final userData = userDoc.data() as Map<String, dynamic>;
+      final int currentUsed = userData['bytesUsed'] ?? 0;
+      final int quota = userData['storageQuotaBytes'] ?? 262144000;
+
+      if (currentUsed + fileSize > quota) {
+        isSenderOverQuota = true;
+      }
+    }
+
     final random = DateTime.now().millisecondsSinceEpoch;
-    final storageRef = FirebaseStorage.instance.ref().child('chat_images/chat_$_chatRoomId\_$random.jpg');
+    final storageRef = FirebaseStorage.instance.ref().child('chat_images/chat_${_chatRoomId}_$random.jpg');
 
-    final uploadTask = storageRef.putFile(File(imageFile.path));
-    final snapshot = await uploadTask;
-    final downloadUrl = await snapshot.ref.getDownloadURL();
+    try {
+      final uploadTask = storageRef.putFile(file);
+      final snapshot = await uploadTask;
+      final downloadUrl = await snapshot.ref.getDownloadURL();
 
-    _sendMessage(messageText: null, imageUrl: downloadUrl);
+      if (!isSenderOverQuota) {
+        // Update used bytes in Firestore for sender
+        await userDocRef.update({
+          'bytesUsed': FieldValue.increment(fileSize),
+        });
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Storage quota exceeded. Image delivered to recipient, but not saved in your cloud backup.'),
+            backgroundColor: Colors.orangeAccent,
+          ),
+        );
+      }
+
+      _sendMessageDecoupled(messageText: null, imageUrl: downloadUrl, isSenderOverQuota: isSenderOverQuota);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Image upload failed: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _handleSubmitted(String text) async {
     _textEditingController.clear();
-    setState(() => _isComposing = false);
-    _sendMessage(messageText: text, imageUrl: null);
+    _isComposing.value = false;
+
+    // Check sender quota status
+    final userDocRef = FirebaseFirestore.instance.collection('users').doc(currentUser!.uid);
+    final userDoc = await userDocRef.get();
+    bool isSenderOverQuota = false;
+
+    if (userDoc.exists) {
+      final userData = userDoc.data() as Map<String, dynamic>;
+      final int currentUsed = userData['bytesUsed'] ?? 0;
+      final int quota = userData['storageQuotaBytes'] ?? 262144000;
+      isSenderOverQuota = currentUsed >= quota;
+    }
+
+    _sendMessageDecoupled(messageText: text, imageUrl: null, isSenderOverQuota: isSenderOverQuota);
   }
 
-  Future<void> _sendMessage({String? messageText, String? imageUrl}) async {
+  Future<void> _sendMessageDecoupled({
+    String? messageText,
+    String? imageUrl,
+    required bool isSenderOverQuota,
+  }) async {
+    final messageData = {
+      'text': messageText,
+      'imageUrl': imageUrl,
+      'senderId': currentUser!.uid,
+      'senderEmail': currentUser!.email,
+      'timestamp': FieldValue.serverTimestamp(),
+    };
+
+    // 1. Shared/Recipient Direct Chat Stream
     final chatDocRef = FirebaseFirestore.instance.collection('chats').doc(_chatRoomId);
 
-    // Initialize participants list for security rules
     await chatDocRef.set({
       'participants': [currentUser!.uid, widget.peerUid],
       'lastMessage': messageText ?? 'Sent an image',
       'lastUpdated': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
 
-    // Append message to subcollection
-    await chatDocRef.collection('messages').add({
-      'text': messageText,
-      'imageUrl': imageUrl,
-      'senderId': currentUser!.uid,
-      'senderEmail': currentUser!.email,
-      'timestamp': FieldValue.serverTimestamp(),
-    });
+    await chatDocRef.collection('messages').add(messageData);
+
+    // 2. Recipient Dedicated Cloud Inbox Delivery (Always succeeds regardless of sender quota)
+    final recipientInboxRef = FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.peerUid)
+        .collection('inbox')
+        .doc(_chatRoomId);
+
+    await recipientInboxRef.set({
+      'lastMessage': messageText ?? 'Sent an image',
+      'lastUpdated': FieldValue.serverTimestamp(),
+      'fromUid': currentUser!.uid,
+    }, SetOptions(merge: true));
+
+    await recipientInboxRef.collection('messages').add(messageData);
+
+    // 3. Sender Cloud Backup (Saves only if under quota; skipped/purged if over quota)
+    if (!isSenderOverQuota) {
+      final senderInboxRef = FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUser!.uid)
+          .collection('inbox')
+          .doc(_chatRoomId);
+
+      await senderInboxRef.set({
+        'lastMessage': messageText ?? 'Sent an image',
+        'lastUpdated': FieldValue.serverTimestamp(),
+        'toUid': widget.peerUid,
+      }, SetOptions(merge: true));
+
+      await senderInboxRef.collection('messages').add(messageData);
+    }
   }
 }

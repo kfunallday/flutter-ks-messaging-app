@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -25,13 +26,49 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // Helper method to write or update user details in Cloud Firestore
   Future<void> _syncUserToFirestore(User user) async {
-    await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-      'uid': user.uid,
-      'email': user.email ?? '',
-      'displayName': user.displayName ?? user.email?.split('@')[0] ?? 'User',
-      'photoURL': user.photoURL ?? '',
-      'lastSeen': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    final userRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
+    final docSnapshot = await userRef.get();
+
+    if (!docSnapshot.exists) {
+      // Initialize full profile schema for new users
+      await userRef.set({
+        'uid': user.uid,
+        'email': user.email ?? '',
+        'displayName': user.displayName ?? user.email?.split('@')[0] ?? 'User',
+        'photoURL': user.photoURL ?? '',
+        'bytesUsed': 0,
+        'storageQuotaBytes': 262144000, // Default 250MB
+        'allowAi': false,               // AI access locked until manual admin review
+        'gemini': {
+          'enabled': false,
+          'models': {
+            'gemini-2.5-flash': false,
+            'gemini-3.7-flash': false,
+          },
+        },
+        'ksAi': {
+          'enabled': false,
+          'models': {},
+        },
+        'thirdPartyAi': {
+          'enabled': false,
+          'byokUnlocked': false,       // Controlled via $1 developer unlock
+          'hasCustomKey': false,
+          'activeProvider': '',
+          'models': {},
+        },
+        'lastSeen': FieldValue.serverTimestamp(),
+      });
+    } else {
+      // Update metadata on login without overwriting existing storage usage or AI rules
+      await userRef.set({
+        'uid': user.uid,
+        'email': user.email ?? '',
+        'displayName': user.displayName ?? user.email?.split('@')[0] ?? 'User',
+        'photoURL': user.photoURL ?? '',
+        'lastSeen': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    }
   }
 
   Future<void> _handleEmailAuth() async {
@@ -98,6 +135,13 @@ class _LoginScreenState extends State<LoginScreen> {
       _showError('Google Sign-In failed: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _launchLegalHelp() async {
+    final Uri url = Uri.parse('https://ks-messaging-docs.ks-everything.com');
+    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+      _showError('Could not open Legal & Help documentation.');
     }
   }
 
@@ -180,6 +224,20 @@ class _LoginScreenState extends State<LoginScreen> {
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
                       onPressed: _signInWithGoogle,
+                    ),
+                    const SizedBox(height: 32),
+                    Center(
+                      child: TextButton(
+                        onPressed: _launchLegalHelp,
+                        child: const Text(
+                          'Legal & Help',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey,
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ),
