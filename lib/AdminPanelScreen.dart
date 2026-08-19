@@ -78,7 +78,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                             ),
                           ),
                           Container(
-                            padding: const EdgeInsets.horizontal(8, 4),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
                               color: Colors.blue.shade50,
                               borderRadius: BorderRadius.circular(6),

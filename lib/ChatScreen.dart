@@ -115,8 +115,8 @@ class AppDrawer extends StatelessWidget {
         ),
         body: LlmChatView(
           provider: FirebaseProvider(
-            model: FirebaseAI.instance.generativeModel(
-              model: 'gemini-2.5-flash',
+            model: FirebaseAI.googleAI().generativeModel(
+              model: 'gemini-1.5-flash',
             ),
           ),
         ),
