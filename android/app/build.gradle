@@ -26,6 +26,7 @@ if (flutterVersionName == null) {
 android {
     namespace "com.kseverything.ksmessaging"
     compileSdk 36
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -34,7 +35,7 @@ android {
 
     kotlinOptions {
         jvmTarget = '17'
-        freeCompilerArgs += ["-language-version", "1.8"]
+        freeCompilerArgs += ["-language-version", "1.9"]
     }
 
     defaultConfig {
