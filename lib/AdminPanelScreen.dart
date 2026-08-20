@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'util/formatters.dart';
 
 class AdminPanelScreen extends StatefulWidget {
   const AdminPanelScreen({super.key});
@@ -17,6 +18,11 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
       appBar: AppBar(
         title: const Text('Admin Management Console'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.psychology),
+            tooltip: 'Manage AI Models',
+            onPressed: _showModelManagementDialog,
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () => setState(() {}),
@@ -45,16 +51,13 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             itemBuilder: (context, index) {
               final userDoc = users[index];
               final data = userDoc.data() as Map<String, dynamic>;
-              
+
               final String uid = userDoc.id;
               final String email = data['email'] ?? 'No Email';
               final int bytesUsed = data['bytesUsed'] ?? 0;
-              final int quotaBytes = data['storageQuotaBytes'] ?? 262144000; // 250 MB default
+              final int quotaBytes = data['storageQuotaBytes'] ?? 262144000;
               final bool hasByokAccess = data['hasByokAccess'] ?? false;
               final bool hasAiAccess = data['hasAiAccess'] ?? false;
-
-              final double usedMb = bytesUsed / (1024 * 1024);
-              final double quotaMb = quotaBytes / (1024 * 1024);
 
               return Card(
                 margin: const EdgeInsets.symmetric(vertical: 8),
@@ -64,48 +67,40 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              email,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.blue.shade50,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              'UID: ${uid.substring(0, uid.length > 8 ? 8 : uid.length)}...',
-                              style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
-                            ),
-                          ),
-                        ],
+                      // Email line
+                      SelectableText(
+                        email,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      // UID on separate line with wrap/auto-adjust
+                      SelectableText(
+                        'UID: $uid',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                          fontFamily: 'monospace',
+                        ),
                       ),
                       const SizedBox(height: 12),
-                      
+
                       // Storage Usage Meter
                       Text(
-                        'Storage: ${usedMb.toStringAsFixed(1)} MB / ${quotaMb.toStringAsFixed(0)} MB',
+                        'Storage: ${formatBytes(bytesUsed)} / ${formatBytes(quotaBytes)}',
                         style: TextStyle(
                           fontSize: 13,
-                          color: usedMb >= quotaMb ? Colors.red : Colors.grey.shade700,
+                          color: bytesUsed >= quotaBytes ? Colors.red : Colors.grey.shade700,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
                       const SizedBox(height: 4),
                       LinearProgressIndicator(
-                        value: quotaMb > 0 ? (usedMb / quotaMb).clamp(0.0, 1.0) : 0,
+                        value: quotaBytes > 0 ? (bytesUsed / quotaBytes).clamp(0.0, 1.0) : 0,
                         backgroundColor: Colors.grey.shade200,
-                        color: usedMb >= quotaMb ? Colors.red : Colors.blue,
+                        color: bytesUsed >= quotaBytes ? Colors.red : Colors.blue,
                       ),
                       const SizedBox(height: 12),
 
@@ -128,7 +123,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                       ),
 
                       const Divider(),
-                      
+
                       // Quick Action Buttons
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
@@ -142,7 +137,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                           ElevatedButton.icon(
                             icon: const Icon(Icons.edit, size: 18),
                             label: const Text('Set Quota'),
-                            onPressed: () => _showQuotaDialog(uid, quotaMb),
+                            onPressed: () => _showQuotaDialog(uid, quotaBytes),
                           ),
                         ],
                       )
@@ -176,7 +171,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
       await _firestore.collection('users').doc(uid).update({'bytesUsed': 0});
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Storage usage reset to 0 MB.')),
+          const SnackBar(content: Text('Storage usage reset to 0 B.')),
         );
       }
     } catch (e) {
@@ -188,35 +183,88 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     }
   }
 
-  void _showQuotaDialog(String uid, double currentQuotaMb) {
-    final controller = TextEditingController(text: currentQuotaMb.toStringAsFixed(0));
+  void _showQuotaDialog(String uid, int currentQuotaBytes) {
+    final controller = TextEditingController();
+    String selectedUnit = 'MB';
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Adjust Storage Quota'),
+          content: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Amount',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              DropdownButton<String>(
+                value: selectedUnit,
+                items: ['KB', 'MB', 'GB', 'TB']
+                    .map((u) => DropdownMenuItem(value: u, child: Text(u)))
+                    .toList(),
+                onChanged: (val) {
+                  if (val != null) setDialogState(() => selectedUnit = val);
+                },
+              )
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final double? val = double.tryParse(controller.text.trim());
+                if (val != null && val >= 0) {
+                  final int newBytes = parseToBytes(val, selectedUnit);
+                  await _updateUserField(uid, 'storageQuotaBytes', newBytes);
+                  if (context.mounted) Navigator.pop(context);
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showModelManagementDialog() {
+    final controller = TextEditingController();
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Adjust Storage Quota'),
+        title: const Text('Manage Available AI Models'),
         content: TextField(
           controller: controller,
-          keyboardType: TextInputType.number,
           decoration: const InputDecoration(
-            labelText: 'Quota in MB',
-            suffixText: 'MB',
+            labelText: 'Model Identifier',
+            hintText: 'gemini-1.5-pro',
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            child: const Text('Close'),
           ),
           ElevatedButton(
             onPressed: () async {
-              final double? newMb = double.tryParse(controller.text.trim());
-              if (newMb != null && newMb >= 0) {
-                final int newBytes = (newMb * 1024 * 1024).toInt();
-                await _updateUserField(uid, 'storageQuotaBytes', newBytes);
+              if (controller.text.isNotEmpty) {
+                await _firestore.collection('config').doc('ai_models').set({
+                  'availableModels': FieldValue.arrayUnion([controller.text.trim()])
+                }, SetOptions(merge: true));
                 if (context.mounted) Navigator.pop(context);
               }
             },
-            child: const Text('Save'),
+            child: const Text('Add Model'),
           ),
         ],
       ),

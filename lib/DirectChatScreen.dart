@@ -29,7 +29,6 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
   @override
   void initState() {
     super.initState();
-    // Deterministic chat ID generation (sorted UIDs)
     final ids = [currentUser!.uid, widget.peerUid]..sort();
     _chatRoomId = ids.join('_');
   }
@@ -59,13 +58,23 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
                   .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
-                  return const Center(child: Text('Error loading messages.'));
+                  return const Center(child: Text('Unable to connect to message stream.'));
                 }
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
 
                 final docs = snapshot.data?.docs ?? [];
+
+                // Fixed: Clean fallback when no conversation exists
+                if (docs.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'No messages yet. Say hello!',
+                      style: TextStyle(color: Colors.grey, fontSize: 16),
+                    ),
+                  );
+                }
 
                 return ListView.builder(
                   reverse: true,
@@ -89,11 +98,15 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
                             if (data['imageUrl'] != null)
                               Padding(
                                 padding: const EdgeInsets.only(bottom: 4.0),
-                                child: Image.network(
-                                  data['imageUrl'],
-                                  width: 200,
-                                  height: 200,
-                                  fit: BoxFit.cover,
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: Image.network(
+                                    data['imageUrl'],
+                                    width: 200,
+                                    height: 200,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 50),
+                                  ),
                                 ),
                               ),
                             if (data['text'] != null && data['text'].toString().isNotEmpty)
@@ -168,7 +181,6 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
     final File file = File(imageFile.path);
     final int fileSize = await file.length();
 
-    // Check user quota before uploading
     final userDocRef = FirebaseFirestore.instance.collection('users').doc(currentUser!.uid);
     final userDoc = await userDocRef.get();
 
@@ -184,15 +196,18 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
     }
 
     final random = DateTime.now().millisecondsSinceEpoch;
-    final storageRef = FirebaseStorage.instance.ref().child('chat_images/chat_${_chatRoomId}_$random.jpg');
+    final storageRef = FirebaseStorage.instance
+        .ref()
+        .child('chat_images')
+        .child(_chatRoomId)
+        .child('$random.jpg');
 
     try {
-      final uploadTask = storageRef.putFile(file);
-      final snapshot = await uploadTask;
+      // Fixed: Explicitly await the putFile TaskSnapshot write before calling getDownloadURL
+      final TaskSnapshot snapshot = await storageRef.putFile(file);
       final downloadUrl = await snapshot.ref.getDownloadURL();
 
       if (!isSenderOverQuota) {
-        // Update used bytes in Firestore for sender
         await userDocRef.update({
           'bytesUsed': FieldValue.increment(fileSize),
         });
@@ -205,7 +220,11 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
         );
       }
 
-      _sendMessageDecoupled(messageText: null, imageUrl: downloadUrl, isSenderOverQuota: isSenderOverQuota);
+      await _sendMessageDecoupled(
+        messageText: null,
+        imageUrl: downloadUrl,
+        isSenderOverQuota: isSenderOverQuota,
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -222,7 +241,6 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
     _textEditingController.clear();
     _isComposing.value = false;
 
-    // Check sender quota status
     final userDocRef = FirebaseFirestore.instance.collection('users').doc(currentUser!.uid);
     final userDoc = await userDocRef.get();
     bool isSenderOverQuota = false;
@@ -234,7 +252,11 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
       isSenderOverQuota = currentUsed >= quota;
     }
 
-    _sendMessageDecoupled(messageText: text, imageUrl: null, isSenderOverQuota: isSenderOverQuota);
+    await _sendMessageDecoupled(
+      messageText: text,
+      imageUrl: null,
+      isSenderOverQuota: isSenderOverQuota,
+    );
   }
 
   Future<void> _sendMessageDecoupled({
@@ -250,7 +272,6 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
       'timestamp': FieldValue.serverTimestamp(),
     };
 
-    // 1. Shared/Recipient Direct Chat Stream
     final chatDocRef = FirebaseFirestore.instance.collection('chats').doc(_chatRoomId);
 
     await chatDocRef.set({
@@ -261,7 +282,6 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
 
     await chatDocRef.collection('messages').add(messageData);
 
-    // 2. Recipient Dedicated Cloud Inbox Delivery (Always succeeds regardless of sender quota)
     final recipientInboxRef = FirebaseFirestore.instance
         .collection('users')
         .doc(widget.peerUid)
@@ -276,7 +296,6 @@ class _DirectChatScreenState extends State<DirectChatScreen> {
 
     await recipientInboxRef.collection('messages').add(messageData);
 
-    // 3. Sender Cloud Backup (Saves only if under quota; skipped/purged if over quota)
     if (!isSenderOverQuota) {
       final senderInboxRef = FirebaseFirestore.instance
           .collection('users')

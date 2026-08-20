@@ -8,6 +8,7 @@ import 'DirectChatScreen.dart';
 import 'AiAccessGateScreen.dart';
 import 'ByokSettingsScreen.dart';
 import 'AdminPanelScreen.dart';
+import 'util/formatters.dart';
 
 class ChatScreen extends StatelessWidget {
   const ChatScreen({super.key});
@@ -16,73 +17,117 @@ class ChatScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final currentUser = FirebaseAuth.instance.currentUser;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Ks-messaging'),
-        elevation: Theme.of(context).platform == TargetPlatform.iOS ? 0.0 : 4.0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.exit_to_app),
-            onPressed: () async {
-              await FirebaseAuth.instance.signOut();
-            },
-          )
-        ],
-      ),
-      drawer: const AppDrawer(),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('users').snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return const Center(child: Text('Error loading users.'));
-          }
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+    return StreamBuilder<DocumentSnapshot>(
+      stream: currentUser != null
+          ? FirebaseFirestore.instance.collection('users').doc(currentUser.uid).snapshots()
+          : null,
+      builder: (context, userSnapshot) {
+        final userData = userSnapshot.data?.data() as Map<String, dynamic>? ?? {};
+        final bool allowAi = userData['allowAi'] ?? false;
+        final Map<String, dynamic> thirdParty = userData['thirdPartyAi'] ?? {};
+        final bool byokUnlocked = thirdParty['byokUnlocked'] ?? false;
+        final bool hasAiAccess = allowAi || byokUnlocked;
 
-          final docs = snapshot.data?.docs ?? [];
-          final otherUsers = docs.where((doc) => doc.id != currentUser?.uid).toList();
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Ks-messaging'),
+            elevation: Theme.of(context).platform == TargetPlatform.iOS ? 0.0 : 4.0,
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.exit_to_app),
+                onPressed: () async {
+                  await FirebaseAuth.instance.signOut();
+                },
+              )
+            ],
+          ),
+          drawer: const AppDrawer(),
+          body: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('users').snapshots(),
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return const Center(child: Text('Error loading users.'));
+              }
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
 
-          if (otherUsers.isEmpty) {
-            return const Center(child: Text('No other users found.'));
-          }
+              final docs = snapshot.data?.docs ?? [];
+              final otherUsers = docs.where((doc) => doc.id != currentUser?.uid).toList();
 
-          return ListView.builder(
-            itemCount: otherUsers.length,
-            itemBuilder: (context, index) {
-              final userData = otherUsers[index].data() as Map<String, dynamic>;
-              final peerUid = userData['uid'] ?? '';
-              final peerName = userData['displayName'] ?? 'User';
-              final peerEmail = userData['email'] ?? '';
+              if (otherUsers.isEmpty) {
+                return const Center(child: Text('No other users found.'));
+              }
 
-              return ListTile(
-                leading: CircleAvatar(
-                  child: Text(peerName.isNotEmpty ? peerName[0].toUpperCase() : 'U'),
-                ),
-                title: Text(peerName),
-                subtitle: Text(peerEmail),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => DirectChatScreen(
-                        peerUid: peerUid,
-                        peerName: peerName,
-                      ),
+              return ListView.builder(
+                itemCount: otherUsers.length,
+                itemBuilder: (context, index) {
+                  final uData = otherUsers[index].data() as Map<String, dynamic>;
+                  final peerUid = uData['uid'] ?? otherUsers[index].id;
+                  final peerName = uData['displayName'] ?? 'User';
+                  final peerEmail = uData['email'] ?? '';
+
+                  return ListTile(
+                    leading: CircleAvatar(
+                      child: Text(peerName.isNotEmpty ? peerName[0].toUpperCase() : 'U'),
                     ),
+                    title: Text(peerName),
+                    subtitle: Text(peerEmail),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => DirectChatScreen(
+                            peerUid: peerUid,
+                            peerName: peerName,
+                          ),
+                        ),
+                      );
+                    },
                   );
                 },
               );
             },
-          );
-        },
+          ),
+          floatingActionButton: hasAiAccess
+              ? FloatingActionButton.extended(
+                  onPressed: () => _openGeminiChat(context),
+                  icon: const Icon(Icons.auto_awesome),
+                  label: const Text('AI Assistant'),
+                  backgroundColor: Colors.indigo,
+                )
+              : null,
+        );
+      },
+    );
+  }
+
+  static void _openGeminiChat(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => Scaffold(
+        appBar: AppBar(
+          title: const Text('Gemini Assistant'),
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
+        body: LlmChatView(
+          provider: FirebaseProvider(
+            model: FirebaseAI.googleAI().generativeModel(
+              model: 'gemini-1.5-flash',
+            ),
+          ),
+        ),
       ),
     );
   }
 }
 
-// Side Drawer Widget containing Logo, AI Routing, Briar, Admin Controls, and Storage Meter
 class AppDrawer extends StatelessWidget {
   const AppDrawer({super.key});
 
@@ -95,6 +140,21 @@ class AppDrawer extends StatelessWidget {
             content: Text('Could not open Legal & Help documentation.'),
             backgroundColor: Colors.redAccent,
           ),
+        );
+      }
+    }
+  }
+
+  Future<void> _launchBriarHandoff(BuildContext context) async {
+    final Uri briarAppUri = Uri.parse('market://details?id=org.briarproject.briar.android');
+    final Uri briarWebUri = Uri.parse('https://play.google.com/store/apps/details?id=org.briarproject.briar.android');
+
+    if (await canLaunchUrl(briarAppUri)) {
+      await launchUrl(briarAppUri, mode: LaunchMode.externalApplication);
+    } else if (!await launchUrl(briarWebUri, mode: LaunchMode.externalApplication)) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open Play Store for Briar.')),
         );
       }
     }
@@ -125,7 +185,7 @@ class AppDrawer extends StatelessWidget {
   }
 
   void _handleAiAccess(BuildContext context, Map<String, dynamic> userData) {
-    Navigator.pop(context); // Close drawer
+    Navigator.pop(context);
 
     final bool allowAi = userData['allowAi'] ?? false;
     final Map<String, dynamic> thirdParty = userData['thirdPartyAi'] ?? {};
@@ -133,21 +193,17 @@ class AppDrawer extends StatelessWidget {
     final bool hasCustomKey = thirdParty['hasCustomKey'] ?? false;
 
     if (allowAi) {
-      // User has full Admin approval for Gemini/default models
       _openGeminiChat(context);
     } else if (byokUnlocked) {
       if (hasCustomKey) {
-        // User unlocked BYOK and configured key
-        _openGeminiChat(context); 
+        _openGeminiChat(context);
       } else {
-        // User unlocked BYOK but hasn't entered key yet
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const ByokSettingsScreen()),
         );
       }
     } else {
-      // Direct user to AI Access Gateway Screen
       Navigator.push(
         context,
         MaterialPageRoute(builder: (_) => const AiAccessGateScreen()),
@@ -171,7 +227,6 @@ class AppDrawer extends StatelessWidget {
 
           return Column(
             children: [
-              // 1. Header with App Logo
               DrawerHeader(
                 decoration: const BoxDecoration(color: Colors.blueAccent),
                 child: Center(
@@ -183,8 +238,6 @@ class AppDrawer extends StatelessWidget {
                   ),
                 ),
               ),
-
-              // 2. Navigation Actions
               ListTile(
                 leading: const Icon(Icons.auto_awesome, color: Colors.indigo),
                 title: const Text('AI Assistant'),
@@ -218,13 +271,9 @@ class AppDrawer extends StatelessWidget {
                 ),
                 onTap: () {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Briar Handoff triggered.')),
-                  );
+                  _launchBriarHandoff(context);
                 },
               ),
-
-              // Admin Panel Option (Visible only to designated admin email)
               if (isAdmin) ...[
                 const Divider(),
                 ListTile(
@@ -240,17 +289,12 @@ class AppDrawer extends StatelessWidget {
                   },
                 ),
               ],
-
               const Spacer(),
-
-              // 3. Dynamic Footer with Storage Meter & Legal Links
               Builder(
                 builder: (context) {
                   final int bytesUsed = userData['bytesUsed'] ?? 0;
                   final int storageQuotaBytes = userData['storageQuotaBytes'] ?? 262144000;
 
-                  final double usedMB = bytesUsed / (1024 * 1024);
-                  final double totalMB = storageQuotaBytes / (1024 * 1024);
                   final double percent = storageQuotaBytes > 0
                       ? (bytesUsed / storageQuotaBytes) * 100
                       : 0.0;
@@ -267,7 +311,7 @@ class AppDrawer extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Text(
-                              '${usedMB.toStringAsFixed(1)} MB / ${totalMB.toStringAsFixed(0)} MB',
+                              '${formatBytes(bytesUsed)} / ${formatBytes(storageQuotaBytes)}',
                               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                             ),
                             Text(

@@ -40,18 +40,15 @@ class FlutterChatApp extends StatelessWidget {
       home: StreamBuilder<User?>(
         stream: FirebaseAuth.instance.authStateChanges(),
         builder: (context, snapshot) {
-          // 1. Show a loading spinner while checking authentication state
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Scaffold(
               body: Center(child: CircularProgressIndicator()),
             );
           }
-          // 2. If the user is logged in, initialize FCM permissions and render ChatScreen
           if (snapshot.hasData) {
             _setupFCM(snapshot.data!);
             return const ChatScreen();
           }
-          // 3. If NOT logged in, route to the LoginScreen
           return const LoginScreen();
         },
       ),
@@ -61,6 +58,13 @@ class FlutterChatApp extends StatelessWidget {
   // Silent native FCM setup when authenticated
   Future<void> _setupFCM(User user) async {
     FirebaseMessaging messaging = FirebaseMessaging.instance;
+
+    // Enable foreground notification banners
+    await messaging.setForegroundNotificationPresentationOptions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
 
     // Request native OS notification permissions
     NotificationSettings settings = await messaging.requestPermission(
@@ -72,7 +76,6 @@ class FlutterChatApp extends StatelessWidget {
     if (settings.authorizationStatus == AuthorizationStatus.authorized) {
       String? token = await messaging.getToken();
       if (token != null) {
-        // Save the FCM device token to the user document in Firestore
         await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
